@@ -7,101 +7,118 @@
 <a name="english"></a>
 ## 🇬🇧 English Description
 
-**OCI Port Opener** is a Python automation script designed for Oracle Cloud Infrastructure (OCI) VPS users. It solves the common headache of having to manually configure both the **Cloud Security Lists** (Web Console) and the **Local Firewall** (iptables) every time you need to open a port.
+**OCI Port Opener** is a battle-tested Python automation script designed for Oracle Cloud Infrastructure (OCI) VPS users. It solves the fragmentation problem between the **Cloud Security Lists** (Web Console) and the **Local Firewall** (iptables).
 
-With a single command, this tool safely opens ports on both layers, ensuring your services are accessible without risking SSH lockouts.
+Unlike simple wrapper scripts, this tool is built with **robustness** in mind, handling edge cases like firewall rule ordering, OCI API inconsistencies, and reboot persistence.
 
-### Key Features
-*   **Dual-Layer Configuration**:
-    *   **Cloud (OCI)**: Automatically detects your instance's VCN and Security List, adding Ingress Rules via OCI CLI.
-    *   **Local (OS)**: Detects `iptables` rules and inserts the `ACCEPT` rule *before* the `REJECT` rule (crucial for Ubuntu/Oracle Linux).
-*   **Safety First**:
-    *   Backs up your Cloud Security List to `~/.oci_backups/` before every modification.
-    *   Never deletes existing rules; only appends new ones.
-*   **Zero-Config (Auto-Discovery)**:
-    *   Automatically fetches your Instance OCID from local `cloud-init` metadata. No manual copy-pasting required.
-*   **Persistence**:
-    *   Ensures `iptables` rules survive reboots using `netfilter-persistent`.
+### 🌟 Why Use This?
+*   **Safety First**: Automatically inserts `ACCEPT` rules *before* existing `REJECT` rules. Appends rules blindly (like `ufw allow`) often fails on Oracle images because the traffic gets rejected before it hits your new rule.
+*   **Dual-Layer Sync**: Opens the port on OCI Network Security List AND local `iptables` simultaneously.
+*   **Disaster Recovery**: Auto-backups your Cloud Security List to `~/.oci_backups/` before touching it.
+*   **Zero Config**: Auto-detects Instance ID and Compartment ID via local metadata files.
 
-### Prerequisites
-1.  **Python 3** (Pre-installed on most modern Linux distros).
-2.  **OCI CLI & API Key**:
-    *   The script requires `oci` CLI installed and configured (`~/.oci/config`).
-    *   *If you haven't configured OCI CLI, the script will guide you or fail gracefully.*
+### 📦 Dependencies
 
-### Usage
+The script uses Python standard libraries (`json`, `subprocess`, `argparse`), but relies on the following system tools:
 
-**1. Open a TCP Port (Default)**
+1.  **OCI CLI**: Must be installed and configured.
+    ```bash
+    # Install
+    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
+    # Setup
+    oci setup config
+    ```
+2.  **iptables-persistent** (Recommended): For saving rules across reboots.
+    ```bash
+    sudo apt install iptables-persistent netfilter-persistent
+    ```
+
+### 🛠 Usage & Verification
+
+**1. Open a Port**
 ```bash
-python3 open_port.py 8080
+python3 open_port.py 18520
 ```
 
-**2. Open a UDP Port**
-```bash
-python3 open_port.py 5000 --proto udp
-```
+**2. Verify (Crucial Step)**
+Opening the port is only half the battle. You must have a service *listening* on that port to test it.
 
-**3. Configure Local Firewall Only (Skip Cloud)**
-```bash
-python3 open_port.py 8080 --local-only
-```
+*   **On VPS (Server side)**: Start a temporary listener.
+    ```bash
+    nc -lvnp 18520
+    # Output: Listening on 0.0.0.0 18520
+    ```
+*   **On Your PC (Client side)**: Try to connect.
+    ```bash
+    nc -vz <YOUR_VPS_IP> 18520
+    # Output: Connection to ... succeeded!
+    ```
 
-### Installation
-Simply clone this repository or download the `open_port.py` script to your VPS.
-```bash
-chmod +x open_port.py
-# Optional: Move to path for global usage
-sudo cp open_port.py /usr/local/bin/open-port
-```
+### 🐛 Known Pitfalls & Dev Notes (What we learned)
+
+*   **The `iptables -C` Trap**: When checking if a rule exists using `subprocess` in Python, you cannot rely on stdout. You MUST check the **Exit Code** (RC). RC 0 means exists, RC 1 means does not exist.
+*   **OCI CLI JSON Inconsistency**: Some OCI CLI commands return the resource directly, while others wrap it in a `{"data": ...}` field. The script implements a robust extractor to handle both formats.
+*   **Firewall Ordering**: On Oracle Ubuntu images, the default `iptables` rules end with a strict `REJECT`. If you just use `iptables -A` (Append), your rule sits *after* the Reject rule and does nothing. This script uses `iptables -I` (Insert) to place rules correctly.
+*   **Persistence**: Ubuntu 24.04 on Oracle Cloud does not autosave iptables. We explicitly trigger `netfilter-persistent save` to prevent lockout after reboot.
 
 ---
 
 <a name="chinese"></a>
 ## 🇨🇳 中文说明
 
-**OCI Port Opener** 是一个专为 Oracle Cloud (甲骨文云) VPS 用户设计的 Python 自动化工具。它解决了每次开端口都需要同时操作“网页控制台安全列表”和“本地防火墙”的繁琐问题。
+**OCI Port Opener** 是一个为 Oracle Cloud (甲骨文云) 定制的硬核端口管理工具。它不仅仅是简单的命令封装，而是为了解决“云防火墙”与“本地防火墙”割裂、规则顺序错误导致无效、以及配置丢失等实际痛点。
 
-只需一条命令，即可同时打通云端和本地的两层防火墙，且保证不会因为配置错误导致 SSH 失联。
+### 🌟 核心特性
+*   **智能插入规则**：脚本不会简单地追加规则（Append），而是会自动寻找 `REJECT` 规则的位置，并将新的 `ACCEPT` 规则插入到它**之前**。这是大多数通用工具（如 `ufw`）在 Oracle 默认镜像上失效的原因。
+*   **双层同步**：一键打通 OCI 云端安全列表 (Security List) 和本地 `iptables`。
+*   **防灾备份**：在修改云端策略前，自动将当前配置备份到 `~/.oci_backups/`。
+*   **零配置启动**：通过读取 `cloud-init` 数据自动获取实例 ID，无需人工查找。
 
-### 核心功能
-*   **双重配置**：
-    *   **云端 (OCI)**：自动识别实例所在的 VCN 和安全列表 (Security List)，并通过 OCI CLI 添加允许规则。
-    *   **本地 (OS)**：自动检测 `iptables` 规则，并将 `ACCEPT` 规则智能插入到 `REJECT` 规则**之前**（这对 Ubuntu/Oracle Linux 至关重要）。
-*   **安全保障**：
-    *   每次修改前，自动备份当前的云端安全列表到 `~/.oci_backups/` 目录。
-    *   只增不减：脚本仅追加新规则，绝不删除或覆盖您现有的其他规则。
-*   **零配置 (自动发现)**：
-    *   自动从本地 `cloud-init` 元数据中读取 Instance OCID，无需人工手动查找和输入 ID。
-*   **持久化**：
-    *   自动调用 `netfilter-persistent` 保存本地规则，确保 VPS 重启后端口依然开放。
+### 📦 依赖项
 
-### 前置要求
-1.  **Python 3** (现代 Linux 发行版通常已预装)。
-2.  **OCI CLI & API Key**:
-    *   脚本运行需要依赖 `oci` 命令行工具及正确的配置 (`~/.oci/config`)。
-    *   *如果您尚未配置 OCI CLI，请先参考 Oracle 官方文档配置 API Key。*
+本脚本主要使用 Python 标准库，但依赖以下系统工具：
 
-### 使用方法
+1.  **OCI CLI**: 必须安装并配置好 API Key。
+    ```bash
+    # 安装
+    bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)"
+    # 配置
+    oci setup config
+    ```
+2.  **iptables-persistent** (强烈建议): 用于持久化保存防火墙规则。
+    ```bash
+    sudo apt install iptables-persistent netfilter-persistent
+    ```
 
-**1. 开启 TCP 端口 (默认)**
+### 🛠 使用与验证指南
+
+**1. 开启端口**
 ```bash
-python3 open_port.py 8080
+python3 open_port.py 18520
 ```
 
-**2. 开启 UDP 端口**
-```bash
-python3 open_port.py 5000 --proto udp
-```
+**2. 验证测试 (必读)**
+很多用户以为跑完脚本就通了，其实不然。如果端口上没有运行程序，外部扫描永远是“拒绝连接”。
 
-**3. 仅配置本地防火墙 (跳过云端)**
-```bash
-python3 open_port.py 8080 --local-only
-```
+*   **在 VPS 上 (服务端)**：启动一个临时监听器。
+    ```bash
+    nc -lvnp 18520
+    # 看到: Listening on 0.0.0.0 18520
+    ```
+*   **在您电脑上 (客户端)**：尝试发起连接。
+    ```bash
+    nc -vz <你的VPS公网IP> 18520
+    # 看到: Connection to ... succeeded! 才算真正成功
+    ```
 
-### 安装
-直接克隆本仓库或下载 `open_port.py` 脚本到您的 VPS 即可。
-```bash
-chmod +x open_port.py
-# 可选：移动到系统路径方便全局调用
-sudo cp open_port.py /usr/local/bin/open-port
-```
+### 🐛 踩坑记录 (Dev Notes)
+
+我们在开发过程中解决的几个关键问题，供开发者参考：
+
+1.  **`iptables -C` 的陷阱**：在 Python 中调用 `iptables -C` (Check) 时，不能只看输出内容。必须通过 **Exit Code (返回码)** 来判断：0 代表规则存在，1 代表不存在。早期的脚本版本因为忽略了这点，导致误判“规则已存在”。
+2.  **OCI CLI 输出格式不统一**：Oracle 的 CLI 命令返回格式很诡异，有时直接返回 JSON 对象，有时又包裹在 `{"data": ...}` 字段里。本脚本内置了一个鲁棒的解析器来同时兼容这两种格式。
+3.  **防火墙顺序至关重要**：Oracle 官方镜像的 iptables 策略非常严格，最后一行通常是 `REJECT all`。如果使用默认的追加方式 (`-A`)，规则会排在拒绝规则之后，导致无效。必须使用 `-I` 指定行号插入。
+4.  **持久化问题**：Ubuntu 24.04 默认不会自动保存 iptables 变动。我们增加了对 `netfilter-persistent` 的调用，确保重启后不翻车。
+
+### 📜 License
+MIT License

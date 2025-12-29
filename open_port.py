@@ -6,7 +6,7 @@ import sys
 import os
 import time
 
-# 配置文件路径，用于缓存 Instance OCID 等信息，避免重复输入
+# Configuration file path for caching Instance OCID to avoid repetitive input
 CONFIG_FILE = os.path.expanduser("~/.oci_port_opener_config.json")
 BACKUP_DIR = os.path.expanduser("~/.oci_backups")
 
@@ -14,9 +14,9 @@ def log(msg, level="INFO"):
     print(f"[{level}] {msg}")
 
 def run_command(cmd, check=True, capture_output=True):
-    """运行 Shell 命令。
-    如果 check=True (默认): 失败时退出脚本，返回 stdout。
-    如果 check=False: 返回 (returncode, stdout) 元组，让调用者处理。
+    """Run Shell command.
+    If check=True (default): Exit script on failure, return stdout.
+    If check=False: Return tuple (returncode, stdout), allowing caller to handle errors.
     """
     try:
         result = subprocess.run(
@@ -38,7 +38,7 @@ def run_command(cmd, check=True, capture_output=True):
         return e.returncode, e.stdout.strip() if e.stdout else ""
 
 def get_instance_id():
-    """获取实例 ID，优先读取缓存，其次尝试本地 cloud-init 文件，最后尝试 Metadata"""
+    """Get Instance ID: Priority: Config File > Local Cloud-Init > Metadata Service > User Input"""
     # 1. Check Config File
     if os.path.exists(CONFIG_FILE):
         try:
@@ -49,7 +49,7 @@ def get_instance_id():
         except:
             pass
 
-    # 2. Try Local Cloud-Init Files (Most reliable/fastest)
+    # 2. Try Local Cloud-Init Files (Most reliable/fastest method on Oracle Linux/Ubuntu)
     log("Checking local cloud-init data for Instance OCID...", "DEBUG")
     try:
         # Check instance-data.json
@@ -107,7 +107,7 @@ def save_config(key, value):
     return value
 
 def configure_local_firewall(port, protocol):
-    """配置本地 iptables"""
+    """Configure local iptables"""
     log(f"Configuring local firewall for Port {port}/{protocol}...")
     
     # 1. Check if rule exists
@@ -118,9 +118,9 @@ def configure_local_firewall(port, protocol):
         return
 
     # 2. Find position of REJECT rule
-    # 我们希望插入到 REJECT 规则之前，或者如果没有 REJECT，就插到最后（但在 POLICY DROP 之前）
-    # 为简单起见，且确保有效，通常插入到 INPUT 链的头部（位置 1）或已知允许规则之后。
-    # 更稳妥的做法是：插入到第一条 REJECT 规则之前。
+    # We want to insert BEFORE the REJECT rule.
+    # If no REJECT rule is found, we append.
+    # Strategy: Parse line numbers to find the first REJECT or DROP.
     
     lines = run_command("sudo iptables -L INPUT -n --line-numbers").splitlines()
     insert_pos = 1
@@ -134,18 +134,18 @@ def configure_local_firewall(port, protocol):
             break
             
     if not found_reject:
-        # 如果没有明确的 REJECT 规则，通常追加即可，但为了保险插入到最后
+        # If no explicit REJECT rule, usually append is fine, but we assume default policy could be strict.
         insert_pos = len(lines) # Approximate, append
         cmd = f"sudo iptables -A INPUT -p {protocol} --dport {port} -j ACCEPT"
     else:
-        # 插入到 REJECT 之前
+        # Insert before REJECT
         cmd = f"sudo iptables -I INPUT {insert_pos} -p {protocol} --dport {port} -j ACCEPT"
 
     log(f"Executing: {cmd}")
     run_command(cmd)
     
     # 3. Persistence
-    # 尝试多种持久化方式
+    # Try multiple persistence tools (iptables-persistent / netfilter-persistent)
     rc_np, _ = run_command("which netfilter-persistent", check=False)
     if rc_np == 0:
         run_command("sudo netfilter-persistent save", check=False)
@@ -157,7 +157,7 @@ def configure_local_firewall(port, protocol):
     log("Local firewall configured successfully.")
 
 def get_security_list_id(instance_id):
-    """查找实例关联的主安全列表"""
+    """Find the primary Security List associated with the Instance"""
     log("Fetching network details from OCI...")
     
     # 0. Get Instance Details to get Compartment ID
@@ -191,7 +191,7 @@ def get_security_list_id(instance_id):
     return sec_lists[0] # Default to the first one
 
 def configure_oci_security_list(sl_id, port, protocol):
-    """安全的更新 OCI Security List"""
+    """Safely update OCI Security List"""
     log(f"Checking OCI Security List: {sl_id}...")
     
     # 1. Fetch current rules
